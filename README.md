@@ -69,7 +69,7 @@ swift run SimQuotaMenu
 
 ```bash
 chmod +x scripts/package_app.sh
-scripts/package_app.sh
+scripts/package_app.sh 0.1.1
 open dist/SimQuotaMenu.app
 ```
 
@@ -79,17 +79,36 @@ open dist/SimQuotaMenu.app
 dist/SimQuotaMenu.app
 ```
 
+打包脚本会使用ad-hoc签名：
+
+```bash
+codesign --force --deep --sign - dist/SimQuotaMenu.app
+```
+
+这不等同于Apple公证，首次打开下载版App时仍可能看到macOS安全提示。
+
+## 未公证App的打开方式
+
+本项目没有使用付费AppleDeveloperID证书签名/公证。下载DMG后如果macOS提示无法打开，可以选择以下方式之一：
+
+- 在Finder里右键App，选择`打开`，再确认打开。
+- 如果你确认来源可信，也可以移除下载隔离标记：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SimQuotaMenu.app
+```
+
 ## 打包成.dmg
 
 ```bash
 chmod +x scripts/package_dmg.sh
-scripts/package_dmg.sh 0.1.0
+scripts/package_dmg.sh 0.1.1
 ```
 
 打包产物在：
 
 ```text
-dist/SimQuotaMenu-0.1.0.dmg
+dist/SimQuotaMenu-0.1.1.dmg
 ```
 
 ## 开发

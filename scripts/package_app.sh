@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="${1:-0.1.1}"
 APP_DIR="$ROOT_DIR/dist/SimQuotaMenu.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -35,7 +36,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>__VERSION__</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
@@ -45,6 +46,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+python3 - "$CONTENTS_DIR/Info.plist" "$VERSION" <<'PY'
+from pathlib import Path
+import sys
 
+path = Path(sys.argv[1])
+version = sys.argv[2]
+path.write_text(path.read_text().replace("__VERSION__", version))
+PY
+
+codesign --force --deep --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 touch "$APP_DIR"
 echo "$APP_DIR"
