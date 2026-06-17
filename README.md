@@ -1,6 +1,16 @@
 # SIM流量菜单栏工具
 
-一个Mac菜单栏小工具，用于查看`web.mnoiot.com`后台里的物联网SIM卡流量余量。
+一个Mac菜单栏小工具，用于查看物联网SIM卡套餐余量和到期时间。
+
+> 适用范围：本App仅适用于“南京阿波罗”公司的“设备套餐管理”公众号中的余量查询。
+
+## 适用公众号
+
+![设备套餐管理公众号](docs/images/wechat-service-account.jpg)
+
+## App效果
+
+![SIM流量菜单栏工具截图](docs/images/app-screenshot.png)
 
 ## 功能
 
