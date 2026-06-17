@@ -69,6 +69,19 @@ open dist/SimQuotaMenu.app
 dist/SimQuotaMenu.app
 ```
 
+## 打包成.dmg
+
+```bash
+chmod +x scripts/package_dmg.sh
+scripts/package_dmg.sh 0.1.0
+```
+
+打包产物在：
+
+```text
+dist/SimQuotaMenu-0.1.0.dmg
+```
+
 ## 开发
 
 ```bash
