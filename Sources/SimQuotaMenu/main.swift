@@ -746,7 +746,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func render(_ snapshot: QuotaSnapshot) {
         lastSnapshot = snapshot
-        let expiryText = snapshot.latestExpiry.map { Self.shortDateString($0) } ?? "--"
+        let expiryText = snapshot.latestExpiry.map { Self.daysRemainingString(until: $0) } ?? "--"
         let warning = warningReason(for: snapshot)
         let prefix = warning == nil ? "" : "⚠ "
         statusItem.button?.title = "\(prefix)\(Self.sizeString(snapshot.remainGB)) \(expiryText)"
@@ -868,7 +868,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let expiryText = snapshot.latestExpiry.map { Self.shortDateString($0) } ?? "--"
+        let expiryText = snapshot.latestExpiry.map { Self.daysRemainingString(until: $0) } ?? "--"
         let key = "\(config.iccid)-\(Self.sizeString(snapshot.remainGB))-\(expiryText)-\(warning)"
         guard key != lastNotificationKey else {
             return
@@ -877,7 +877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let content = UNMutableNotificationContent()
         content.title = "SIM流量提醒"
-        content.body = "\(warning)，当前剩余\(Self.sizeString(snapshot.remainGB))，最远到期\(expiryText)"
+        content.body = "\(warning)，当前剩余\(Self.sizeString(snapshot.remainGB))，最远到期剩余\(expiryText)"
         content.sound = .default
         let request = UNNotificationRequest(identifier: "sim-quota-warning-\(config.iccid)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
@@ -921,6 +921,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let formatter = DateFormatter()
         formatter.dateFormat = "M-dd"
         return formatter.string(from: date)
+    }
+
+    private static func daysRemainingString(until date: Date) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let expiryDay = calendar.startOfDay(for: date)
+        let days = calendar.dateComponents([.day], from: today, to: expiryDay).day ?? 0
+        return "\(max(days, 0))D"
     }
 
     private static func relativeTimeString(since date: Date) -> String {
