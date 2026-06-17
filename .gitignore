@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+dist/
+Resources/AppIcon.iconset/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+xcuserdata/
+
+# 本地配置和接手记录，不建议公开提交。
+AGENTS.md
+*.local
+*.log
