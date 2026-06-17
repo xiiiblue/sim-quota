@@ -126,6 +126,8 @@ scripts/package_dmg.sh
 dist/SimQuotaMenu-版本号.dmg
 ```
 
+DMG会生成带背景图的拖拽安装窗口，包含`SimQuotaMenu.app`和`Applications`快捷方式。
+
 ## 开发
 
 ```bash
@@ -138,7 +140,7 @@ swift run SimQuotaMenu
 版本号统一维护在[VERSION](VERSION)。打包脚本默认读取该文件，也可以显式传入版本号覆盖：
 
 ```bash
-scripts/package_dmg.sh 0.2.1
+scripts/package_dmg.sh 0.2.2
 ```
 
 ## 许可证
