@@ -156,20 +156,29 @@ struct PackageSummary {
 
 enum APIError: LocalizedError {
     case invalidURL
-    case invalidResponse
+    case network(String)
+    case httpStatus(Int)
+    case decoding
     case backend(String)
+    case emptyCards
     case emptyPackages
 
     var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "接口地址无效"
-        case .invalidResponse:
-            return "接口响应无法解析"
+        case .network(let message):
+            return "网络连接失败：\(message)"
+        case .httpStatus(let statusCode):
+            return "服务暂时不可用：HTTP \(statusCode)"
+        case .decoding:
+            return "服务返回格式已变化，请更新App或反馈问题"
         case .backend(let message):
             return message
+        case .emptyCards:
+            return "没有查到绑定卡片，请确认手机号是否正确"
         case .emptyPackages:
-            return "没有查到套餐余量"
+            return "没有查到可用套餐，请确认卡片是否已激活或有套餐"
         }
     }
 }
@@ -267,7 +276,11 @@ final class MnoiotClient {
         }
 
         let response: CardsResponse = try await request(url)
-        return response.data ?? []
+        let cards = response.data ?? []
+        guard !cards.isEmpty else {
+            throw APIError.emptyCards
+        }
+        return cards
     }
 
     func fetchQuota(iccid: String) async throws -> QuotaSnapshot {
@@ -329,14 +342,23 @@ final class MnoiotClient {
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
-        let (data, response) = try await session.data(from: url)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: url)
+        } catch let error as URLError {
+            throw APIError.network(error.localizedDescription)
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.invalidResponse
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw APIError.httpStatus(statusCode)
         }
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            throw APIError.invalidResponse
+            throw APIError.decoding
         }
     }
 
@@ -428,6 +450,10 @@ final class SettingsWindowController: NSWindowController {
     @objc private func loadCards() {
         let phone = phoneField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         statusLabel.stringValue = "正在加载..."
+        guard !phone.isEmpty else {
+            statusLabel.stringValue = "请先填写手机号"
+            return
+        }
         onLoadCards?(phone) { [weak self] cards, error in
             DispatchQueue.main.async {
                 guard let self else {
@@ -449,7 +475,7 @@ final class SettingsWindowController: NSWindowController {
                     self.cardsPopup.addItem(withTitle: title)
                     self.cardsPopup.lastItem?.representedObject = card.iccid
                 }
-                self.statusLabel.stringValue = cards.isEmpty ? "没有查到卡片" : "已加载\(cards.count)张卡"
+                self.statusLabel.stringValue = "已加载\(cards.count)张卡"
             }
         }
     }
@@ -616,7 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 await MainActor.run {
                     statusItem.button?.title = "错误"
-                    usedItem.title = "错误: \(error.localizedDescription)"
+                    usedItem.title = "错误: \(Self.displayMessage(for: error))"
                     updatedItem.title = "更新时间: \(Self.timeString(Date()))"
                     replacePackageItems([])
                 }
@@ -680,16 +706,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else {
                 return
             }
-            guard !phone.isEmpty else {
-                completion([], "请先填写手机号")
-                return
-            }
             Task {
                 do {
                     let cards = try await self.client.fetchCards(phoneNumber: phone)
                     completion(cards, nil)
                 } catch {
-                    completion([], error.localizedDescription)
+                    completion([], Self.displayMessage(for: error))
                 }
             }
         }
@@ -728,6 +750,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let formatter = DateFormatter()
         formatter.dateFormat = "M-dd"
         return formatter.string(from: date)
+    }
+
+    private static func displayMessage(for error: Error) -> String {
+        if let localizedError = error as? LocalizedError, let description = localizedError.errorDescription {
+            return description
+        }
+        return error.localizedDescription
     }
 }
 

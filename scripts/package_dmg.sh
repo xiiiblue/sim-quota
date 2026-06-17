@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="SimQuotaMenu"
-VERSION="${1:-0.1.1}"
+VERSION="${1:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
 APP_PATH="$ROOT_DIR/dist/$APP_NAME.app"
 DMG_ROOT="$ROOT_DIR/dist/dmg-root"
 DMG_PATH="$ROOT_DIR/dist/$APP_NAME-$VERSION.dmg"

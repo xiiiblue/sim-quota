@@ -19,6 +19,7 @@
 - 支持按手机号加载绑定卡片，并保存选中的ICCID。
 - 支持菜单内设置刷新间隔。
 - 支持用户级开机自启。
+- 对网络异常、未查到卡片、未查到套餐和服务返回格式变化提供更明确的提示。
 
 ## 隐私说明
 
@@ -69,7 +70,7 @@ swift run SimQuotaMenu
 
 ```bash
 chmod +x scripts/package_app.sh
-scripts/package_app.sh 0.1.1
+scripts/package_app.sh
 open dist/SimQuotaMenu.app
 ```
 
@@ -102,13 +103,13 @@ xattr -dr com.apple.quarantine /Applications/SimQuotaMenu.app
 
 ```bash
 chmod +x scripts/package_dmg.sh
-scripts/package_dmg.sh 0.1.1
+scripts/package_dmg.sh
 ```
 
 打包产物在：
 
 ```text
-dist/SimQuotaMenu-0.1.1.dmg
+dist/SimQuotaMenu-版本号.dmg
 ```
 
 ## 开发
@@ -119,6 +120,12 @@ swift run SimQuotaMenu
 ```
 
 本项目没有第三方依赖。打包产物和SwiftPM构建目录已在`.gitignore`中排除。
+
+版本号统一维护在[VERSION](VERSION)。打包脚本默认读取该文件，也可以显式传入版本号覆盖：
+
+```bash
+scripts/package_dmg.sh 0.1.2
+```
 
 ## 许可证
 
