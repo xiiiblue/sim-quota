@@ -1,29 +1,34 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 struct AppConfig: Codable {
     var phoneNumber: String = ""
     var iccid: String = ""
     var refreshMinutes: Int = 30
     var launchAtLogin: Bool = false
+    var savedCards: [SavedCard] = []
 
     enum CodingKeys: String, CodingKey {
         case phoneNumber
         case iccid
         case refreshMinutes
         case launchAtLogin
+        case savedCards
     }
 
     init(
         phoneNumber: String = "",
         iccid: String = "",
         refreshMinutes: Int = 30,
-        launchAtLogin: Bool = false
+        launchAtLogin: Bool = false,
+        savedCards: [SavedCard] = []
     ) {
         self.phoneNumber = phoneNumber
         self.iccid = iccid
         self.refreshMinutes = refreshMinutes
         self.launchAtLogin = launchAtLogin
+        self.savedCards = savedCards
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +37,28 @@ struct AppConfig: Codable {
         iccid = try container.decodeIfPresent(String.self, forKey: .iccid) ?? ""
         refreshMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshMinutes) ?? 30
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        savedCards = try container.decodeIfPresent([SavedCard].self, forKey: .savedCards) ?? []
+    }
+}
+
+struct SavedCard: Codable, Equatable {
+    let iccid: String
+    let shortnum: String?
+    let note: String?
+
+    var displayTitle: String {
+        [iccid, shortnum, note]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " / ")
+    }
+
+    init(iccid: String, shortnum: String?, note: String?) {
+        self.iccid = iccid
+        self.shortnum = shortnum
+        self.note = note
     }
 }
 
@@ -54,6 +81,10 @@ struct CardInfo: Decodable {
         shortnum = try container.decodeIfPresent(String.self, forKey: .shortnum)
         note = try container.decodeIfPresent(String.self, forKey: .note)
         status = try container.decodeFlexibleIntIfPresent(forKey: .status)
+    }
+
+    var savedCard: SavedCard {
+        SavedCard(iccid: iccid, shortnum: shortnum, note: note)
     }
 }
 
@@ -396,6 +427,7 @@ final class SettingsWindowController: NSWindowController {
     private let statusLabel = NSTextField(labelWithString: "")
     private let cardsPopup = NSPopUpButton()
     private var config: AppConfig = AppConfig()
+    private var loadedCards: [SavedCard] = []
 
     var onSave: ((AppConfig) -> Void)?
     var onLoadCards: ((String, @escaping ([CardInfo], String?) -> Void) -> Void)?
@@ -465,14 +497,9 @@ final class SettingsWindowController: NSWindowController {
                 }
 
                 self.cardsPopup.removeAllItems()
+                self.loadedCards = cards.map(\.savedCard)
                 cards.forEach { card in
-                    let title = [card.iccid, card.shortnum, card.note]
-                        .compactMap { value in
-                            guard let value, !value.isEmpty else { return nil }
-                            return value
-                        }
-                        .joined(separator: " / ")
-                    self.cardsPopup.addItem(withTitle: title)
+                    self.cardsPopup.addItem(withTitle: card.savedCard.displayTitle)
                     self.cardsPopup.lastItem?.representedObject = card.iccid
                 }
                 self.statusLabel.stringValue = "已加载\(cards.count)张卡"
@@ -488,7 +515,8 @@ final class SettingsWindowController: NSWindowController {
             phoneNumber: phoneField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
             iccid: iccid,
             refreshMinutes: config.refreshMinutes,
-            launchAtLogin: config.launchAtLogin
+            launchAtLogin: config.launchAtLogin,
+            savedCards: loadedCards
         )
         onSave?(newConfig)
         window?.close()
@@ -503,22 +531,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = AppConfig()
     private var statusItem: NSStatusItem!
     private var timer: Timer?
+    private var relativeTimeTimer: Timer?
     private var settingsWindow: SettingsWindowController?
+    private var lastSnapshot: QuotaSnapshot?
+    private var lastNotificationKey: String?
 
     private let usedItem = NSMenuItem(title: "已用/总量: --", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "更新时间: --", action: nil, keyEquivalent: "")
     private let packageHeaderItem = NSMenuItem(title: "套餐明细", action: nil, keyEquivalent: "")
     private var packageItems: [NSMenuItem] = []
+    private var switchCardItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var refreshIntervalItems: [Int: NSMenuItem] = [:]
     private let refreshOptions = [1, 5, 10, 30, 60, 120]
+    private let lowRemainThresholdGB = 10.0
+    private let expiryWarningDays = 3
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = store.load()
         config.launchAtLogin = launchAgentManager.isEnabled
+        requestNotificationPermission()
         setupMainMenu()
         setupMenu()
         scheduleRefresh()
+        scheduleRelativeTimeUpdates()
         refreshQuota()
     }
 
@@ -552,14 +588,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(packageHeaderItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "刷新", action: #selector(refreshQuota), keyEquivalent: "r"))
+        switchCardItem = makeSwitchCardMenuItem()
+        menu.addItem(switchCardItem)
         menu.addItem(makeRefreshIntervalMenuItem())
         launchAtLoginItem = NSMenuItem(title: launchAtLoginTitle(), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         menu.addItem(launchAtLoginItem)
         menu.addItem(makeSettingsMenuItem())
+        menu.addItem(NSMenuItem(title: "重置配置", action: #selector(resetConfig), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
+        rebuildSwitchCardMenu()
+    }
+
+    private func makeSwitchCardMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "切换卡片", action: nil, keyEquivalent: "")
+        item.submenu = NSMenu(title: "切换卡片")
+        return item
     }
 
     private func makeRefreshIntervalMenuItem() -> NSMenuItem {
@@ -587,6 +633,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(max(config.refreshMinutes, 1) * 60), repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshQuota()
+            }
+        }
+    }
+
+    private func scheduleRelativeTimeUpdates() {
+        relativeTimeTimer?.invalidate()
+        relativeTimeTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateRelativeTimeItem()
             }
         }
     }
@@ -619,6 +674,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.launchAtLogin ? "✓ 开机自启" : "开机自启"
     }
 
+    private func rebuildSwitchCardMenu() {
+        guard let submenu = switchCardItem?.submenu else {
+            return
+        }
+
+        submenu.removeAllItems()
+        if config.savedCards.isEmpty {
+            let item = NSMenuItem(title: "暂无已加载卡片", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            submenu.addItem(item)
+            switchCardItem.isEnabled = false
+            return
+        }
+
+        switchCardItem.isEnabled = true
+        config.savedCards.forEach { card in
+            let item = NSMenuItem(title: switchCardTitle(card), action: #selector(selectSavedCard(_:)), keyEquivalent: "")
+            item.representedObject = card.iccid
+            item.target = self
+            submenu.addItem(item)
+        }
+    }
+
+    private func switchCardTitle(_ card: SavedCard) -> String {
+        card.iccid == config.iccid ? "✓ \(card.displayTitle)" : card.displayTitle
+    }
+
+    @objc private func selectSavedCard(_ sender: NSMenuItem) {
+        guard let iccid = sender.representedObject as? String, iccid != config.iccid else {
+            return
+        }
+
+        config.iccid = iccid
+        store.save(config)
+        rebuildSwitchCardMenu()
+        refreshQuota()
+    }
+
     private func refreshIntervalTitle(_ minutes: Int) -> String {
         minutes == config.refreshMinutes ? "✓ \(minutes)分钟" : "\(minutes)分钟"
     }
@@ -628,6 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.title = "设置"
             usedItem.title = "已用/总量: --"
             updatedItem.title = "更新时间: --"
+            lastSnapshot = nil
             replacePackageItems([])
             return
         }
@@ -651,11 +745,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func render(_ snapshot: QuotaSnapshot) {
+        lastSnapshot = snapshot
         let expiryText = snapshot.latestExpiry.map { Self.shortDateString($0) } ?? "--"
-        statusItem.button?.title = "\(Self.sizeString(snapshot.remainGB)) \(expiryText)"
+        let warning = warningReason(for: snapshot)
+        let prefix = warning == nil ? "" : "⚠ "
+        statusItem.button?.title = "\(prefix)\(Self.sizeString(snapshot.remainGB)) \(expiryText)"
         usedItem.title = "已用/总量: \(Self.sizeString(snapshot.usedGB)) / \(Self.sizeString(snapshot.totalGB))"
-        updatedItem.title = "更新时间: \(Self.timeString(snapshot.fetchedAt))"
+        updateRelativeTimeItem()
         replacePackageItems(snapshot.details)
+        notifyIfNeeded(snapshot: snapshot, warning: warning)
     }
 
     private func replacePackageItems(_ packages: [PackageSummary]) {
@@ -699,6 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.config = newConfig
             self.store.save(newConfig)
+            self.rebuildSwitchCardMenu()
             self.scheduleRefresh()
             self.refreshQuota()
         }
@@ -720,8 +819,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func resetConfig() {
+        let alert = NSAlert()
+        alert.messageText = "重置配置？"
+        alert.informativeText = "将清除本地保存的手机号、ICCID、已加载卡片和开机自启设置。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "重置")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        try? launchAgentManager.setEnabled(false)
+        config = AppConfig(refreshMinutes: config.refreshMinutes)
+        store.save(config)
+        lastSnapshot = nil
+        lastNotificationKey = nil
+        launchAtLoginItem.title = launchAtLoginTitle()
+        rebuildSwitchCardMenu()
+        statusItem.button?.title = "设置"
+        usedItem.title = "已用/总量: --"
+        updatedItem.title = "更新时间: --"
+        replacePackageItems([])
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func warningReason(for snapshot: QuotaSnapshot) -> String? {
+        if snapshot.remainGB < lowRemainThresholdGB {
+            return "套餐余量低于\(Self.sizeString(lowRemainThresholdGB))"
+        }
+
+        guard let latestExpiry = snapshot.latestExpiry else {
+            return nil
+        }
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: latestExpiry).day ?? Int.max
+        if days < expiryWarningDays {
+            return "套餐将在\(max(days, 0))天内到期"
+        }
+        return nil
+    }
+
+    private func notifyIfNeeded(snapshot: QuotaSnapshot, warning: String?) {
+        guard let warning else {
+            lastNotificationKey = nil
+            return
+        }
+
+        let expiryText = snapshot.latestExpiry.map { Self.shortDateString($0) } ?? "--"
+        let key = "\(config.iccid)-\(Self.sizeString(snapshot.remainGB))-\(expiryText)-\(warning)"
+        guard key != lastNotificationKey else {
+            return
+        }
+        lastNotificationKey = key
+
+        let content = UNMutableNotificationContent()
+        content.title = "SIM流量提醒"
+        content.body = "\(warning)，当前剩余\(Self.sizeString(snapshot.remainGB))，最远到期\(expiryText)"
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "sim-quota-warning-\(config.iccid)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func updateRelativeTimeItem() {
+        guard let snapshot = lastSnapshot else {
+            updatedItem.title = "更新时间: --"
+            return
+        }
+        updatedItem.title = "更新时间: \(Self.relativeTimeString(since: snapshot.fetchedAt))"
     }
 
     private static func sizeString(_ gb: Double) -> String {
@@ -750,6 +921,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let formatter = DateFormatter()
         formatter.dateFormat = "M-dd"
         return formatter.string(from: date)
+    }
+
+    private static func relativeTimeString(since date: Date) -> String {
+        let seconds = max(Int(Date().timeIntervalSince(date)), 0)
+        if seconds < 60 {
+            return "刚刚"
+        }
+
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)分钟前"
+        }
+
+        let hours = minutes / 60
+        if hours < 24 {
+            return "\(hours)小时前"
+        }
+
+        let days = hours / 24
+        return "\(days)天前"
     }
 
     private static func displayMessage(for error: Error) -> String {
